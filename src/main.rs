@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, collections::HashMap};
 use songbird::SerenityInit;
 use serenity::client::Context;
 
@@ -15,6 +15,7 @@ use serenity::{
     model::{channel::Message, gateway::Ready},
     Result as SerenityResult,
 };
+use songbird::input::{Input, Restartable};
 
 const HELP_MESSAGE: &str = "
 What do you want, loser?
@@ -22,20 +23,10 @@ What do you want, loser?
 Available commands: *join, *play, *skip, *leave
 ";
 
-const HELP_COMMAND: &str = "*help";
-
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.content == HELP_COMMAND {
-            if let Err(error) = msg.channel_id.say(&ctx.http, HELP_MESSAGE).await {
-                println!("Error sending message: {:?}", error);
-            }
-        }
-    }
-
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
     }
@@ -71,6 +62,15 @@ async fn main() {
     println!("Received Ctrl-C, shutting down.")
 }    
 
+#[command]
+#[only_in(guilds)]
+async fn help(ctx: &Context, msg: &Message) -> CommandResult {
+    if let Err(error) = msg.channel_id.say(&ctx.http, HELP_MESSAGE).await {
+        println!("Error sending message: {:?}", error);
+    }
+
+    Ok(())
+}
 #[command]
 #[only_in(guilds)]
 async fn join(ctx: &Context, msg: &Message) -> CommandResult {
@@ -120,12 +120,33 @@ async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     
     if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
-        let source = match songbird::ytdl(if !url.starts_with("http") {
+
+        let query = if !url.starts_with("http") {
             format!("ytsearch:{}", &song_name)
         } else {
             url
-        }).await {
-            Ok(source) => source,
+        };
+
+        let source = match Restartable::ytdl(query, true).await {
+            Ok(song) => {
+                let input = Input::from(song);
+                let content = format!("Now playing **{:?}** by **{:?}**",
+                    input
+                        .metadata
+                        .track
+                        .as_ref()
+                        .unwrap_or(&"unknown".to_string()),
+                    input
+                        .metadata
+                        .artist
+                        .as_ref()
+                        .unwrap_or(&"unknown".to_string()),
+                );
+
+                check_msg(msg.channel_id.say(&ctx.http, content).await);
+
+                input
+            },
             Err(why) => {
                 println!("Err starting source: {:?}", why);
 
@@ -135,9 +156,13 @@ async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
             },
         };
 
-        handler.play_source(source);
+        if let Err(why) = handler.play_only_source(source).enable_loop() {
+            println!("Err looping source: {:?}", why);
 
-        check_msg(msg.channel_id.say(&ctx.http, "Playing song").await);
+            check_msg(msg.channel_id.say(&ctx.http, "why").await);
+
+            return Ok(());
+        }
     } else {
         check_msg(msg.channel_id.say(&ctx.http, "Not in a voice channel to play in").await);
     }
