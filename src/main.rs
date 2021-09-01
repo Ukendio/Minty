@@ -20,7 +20,7 @@ use songbird::input::{Input, Restartable};
 const HELP_MESSAGE: &str = "
 What do you want, loser?
 
-Available commands: *join, *play, *skip, *leave
+Available commands: *join, *play, *stop, *leave
 ";
 
 struct Handler;
@@ -33,7 +33,7 @@ impl EventHandler for Handler {
 }
 
 #[group]
-#[commands(play, join, leave, skip)]
+#[commands(play, join, leave, stop)]
 struct General;
 
 #[tokio::main]
@@ -195,7 +195,7 @@ async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
 
 #[command]
 #[only_in(guilds)]
-async fn skip(ctx: &Context, msg: &Message) -> CommandResult {
+async fn stop(ctx: &Context, msg: &Message) -> CommandResult {
     let guild = msg.guild(&ctx.cache).await.unwrap();
     let guild_id = guild.id;
 
